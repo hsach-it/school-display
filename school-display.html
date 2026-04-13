@@ -1,0 +1,382 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>School Display</title>
+
+<style>
+  body {
+    margin: 0;
+    overflow: hidden;
+    font-family: Arial, sans-serif;
+    background: black;
+  }
+
+  #slides {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    border: none;
+  }
+
+  #overlay {
+    position: absolute;
+    inset: 0;
+    background: red;
+    color: white;
+    display: none;
+    justify-content: center;
+    align-items: center;
+    text-align: center;
+    font-size: 4vw;
+    font-weight: bold;
+    z-index: 20;
+    white-space: pre-line;
+  }
+
+  #statusbar {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0,0,0,0.72);
+    color: white;
+    text-align: center;
+    font-size: 2vw;
+    padding: 10px 16px;
+    z-index: 8;
+  }
+
+  #clock {
+    position: absolute;
+    top: 10px;
+    right: 14px;
+    background: rgba(0,0,0,0.65);
+    color: white;
+    padding: 8px 14px;
+    border-radius: 8px;
+    font-size: 1.7vw;
+    font-weight: bold;
+    z-index: 12;
+  }
+
+  #topbar {
+    position: absolute;
+    top: 10px;
+    left: 10px;
+    z-index: 12;
+    opacity: 1;
+    transition: opacity 0.6s;
+  }
+
+  #topbar.hidden {
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  button {
+    font-size: 11px;
+    padding: 3px 7px;
+    margin-right: 4px;
+    cursor: pointer;
+  }
+</style>
+</head>
+
+<body>
+
+<iframe
+  id="slides"
+  src="https://docs.google.com/presentation/d/e/2PACX-1vQZPRUfcurI2N6g00GsYvS11eBAEugZMRNLGQuM2Xa92JRrPvB6TNm2sl5PjjoAg12WYEnl0KweCcx5/embed?start=true&loop=true&delayms=10000&rm=minimal"
+  allowfullscreen="true">
+</iframe>
+
+<div id="overlay"></div>
+<div id="clock"></div>
+<div id="statusbar"></div>
+
+<div id="topbar">
+  <button onclick="setMode('regular')">Regular</button>
+  <button onclick="setMode('early')">ER</button>
+</div>
+
+<script>
+  let mode = "regular";
+  let bellActiveUntil = 0;
+  let controlsHideTimer = null;
+  let lastBellKey = "";
+
+  const regular = [
+    { name: "Homeroom", start: "07:40", end: "07:45" },
+    { name: "1st Period", start: "07:45", end: "08:33" },
+    { name: "2nd Period", start: "08:37", end: "09:25" },
+    { name: "3rd Period", start: "09:29", end: "10:17" },
+    { name: "4th Period", start: "10:21", end: "11:09" },
+
+    { name: "Lunch A", start: "11:13", end: "11:39" },
+    { name: "5A", start: "11:43", end: "12:31" },
+
+    { name: "5B", start: "11:13", end: "12:01" },
+    { name: "Lunch B", start: "12:05", end: "12:31" },
+
+    { name: "6C", start: "11:13", end: "12:53" },
+    { name: "Lunch C", start: "12:57", end: "13:23" },
+
+    { name: "6A", start: "12:35", end: "13:23" },
+    { name: "7th Period", start: "13:27", end: "14:15" }
+  ];
+
+  const early = [
+    { name: "Homeroom", start: "07:40", end: "07:45" },
+    { name: "1st Period", start: "07:45", end: "08:18" },
+    { name: "2nd Period", start: "08:22", end: "08:55" },
+    { name: "3rd Period", start: "08:59", end: "09:32" },
+    { name: "4th Period", start: "09:36", end: "10:09" },
+
+    { name: "Lunch A", start: "10:13", end: "10:39" },
+    { name: "5A", start: "10:43", end: "11:16" },
+
+    { name: "5B", start: "10:13", end: "10:46" },
+    { name: "Lunch B", start: "10:50", end: "11:16" },
+
+    { name: "6C", start: "10:13", end: "11:23" },
+    { name: "Lunch C", start: "11:27", end: "11:53" },
+
+    { name: "6A", start: "11:20", end: "11:53" },
+    { name: "7th Period", start: "11:57", end: "12:30" }
+  ];
+
+  function setMode(newMode) {
+    mode = newMode;
+    lastBellKey = "";
+    showControlsTemporarily();
+    updateStatusBar();
+  }
+
+  function getSchedule() {
+    return mode === "early" ? early : regular;
+  }
+
+  function toDate(timeStr) {
+    const [h, m] = timeStr.split(":").map(Number);
+    const d = new Date();
+    d.setHours(h, m, 0, 0);
+    return d;
+  }
+
+  function updateClock() {
+    const now = new Date();
+    document.getElementById("clock").innerText =
+      now.toLocaleTimeString([], {
+        hour: "numeric",
+        minute: "2-digit",
+        second: "2-digit"
+      });
+  }
+
+  function getCurrentBlocks() {
+    const now = new Date();
+    const schedule = getSchedule();
+    const current = [];
+
+    for (const block of schedule) {
+      const start = toDate(block.start);
+      const end = toDate(block.end);
+      if (now >= start && now < end) {
+        current.push(block);
+      }
+    }
+
+    return current;
+  }
+
+  function getCombinedCurrentLabel(blocks) {
+    if (!blocks.length) return "";
+
+    const names = blocks.map(b => b.name);
+
+    const hasLunchA = names.includes("Lunch A");
+    const hasLunchB = names.includes("Lunch B");
+    const hasLunchC = names.includes("Lunch C");
+    const has5A = names.includes("5A");
+    const has5B = names.includes("5B");
+    const has6A = names.includes("6A");
+    const has6C = names.includes("6C");
+
+    if (has5A || hasLunchB || has6C) {
+      const combined = [];
+      if (has5A) combined.push("5A");
+      if (hasLunchB) combined.push("Lunch B");
+      if (has6C) combined.push("6C");
+      return combined.join(" / ");
+    }
+
+    if (hasLunchA || has5B) {
+      const combined = [];
+      if (hasLunchA) combined.push("Lunch A");
+      if (has5B) combined.push("5B");
+      return combined.join(" / ");
+    }
+
+    if (has6A || hasLunchC) {
+      const combined = [];
+      if (has6A) combined.push("6A");
+      if (hasLunchC) combined.push("Lunch C");
+      return combined.join(" / ");
+    }
+
+    return names.join(" / ");
+  }
+
+  function updateStatusBar() {
+    const bar = document.getElementById("statusbar");
+    const currentBlocks = getCurrentBlocks();
+
+    if (!currentBlocks.length) {
+      bar.innerText = "";
+      return;
+    }
+
+    bar.innerText = "Current Period: " + getCombinedCurrentLabel(currentBlocks);
+  }
+
+  function showOverlay(text) {
+    const overlay = document.getElementById("overlay");
+    overlay.innerText = text;
+    overlay.style.display = "flex";
+  }
+
+  function hideOverlay() {
+    document.getElementById("overlay").style.display = "none";
+  }
+
+  function getUpcomingStarts() {
+    const now = new Date();
+    const schedule = getSchedule();
+    const upcoming = [];
+
+    for (const block of schedule) {
+      const start = toDate(block.start);
+      if (start > now) {
+        upcoming.push({
+          name: block.name,
+          start: start,
+          key: block.name + "_" + block.start
+        });
+      }
+    }
+
+    upcoming.sort((a, b) => a.start - b.start);
+    return upcoming;
+  }
+
+  function getStartsAtSameTime(targetDate) {
+    const schedule = getSchedule();
+    const result = [];
+    const targetMs = targetDate.getTime();
+
+    for (const block of schedule) {
+      const start = toDate(block.start);
+      if (start.getTime() === targetMs) {
+        result.push(block.name);
+      }
+    }
+
+    return result;
+  }
+
+  function getCombinedStartLabel(names) {
+    const ordered = [];
+    const preferredOrder = [
+      "Homeroom",
+      "1st Period",
+      "2nd Period",
+      "3rd Period",
+      "4th Period",
+      "Lunch A",
+      "5A",
+      "5B",
+      "Lunch B",
+      "6C",
+      "6A",
+      "Lunch C",
+      "7th Period"
+    ];
+
+    for (const item of preferredOrder) {
+      if (names.includes(item)) {
+        ordered.push(item);
+      }
+    }
+
+    return ordered.join(" / ");
+  }
+
+  function checkAlerts() {
+    const now = new Date();
+
+    if (now.getTime() < bellActiveUntil) {
+      return;
+    }
+
+    const currentBlocks = getCurrentBlocks();
+    if (currentBlocks.length) {
+      for (const block of currentBlocks) {
+        const start = toDate(block.start);
+        const diffFromStart = Math.floor((now.getTime() - start.getTime()) / 1000);
+        const bellKey = block.name + "_" + block.start;
+
+        if (diffFromStart >= 0 && diffFromStart < 1 && lastBellKey !== bellKey) {
+          const sameTimeNames = getStartsAtSameTime(start);
+          showOverlay("🔴 BELL RINGING\n" + getCombinedStartLabel(sameTimeNames));
+          bellActiveUntil = now.getTime() + 15000;
+          lastBellKey = bellKey;
+          return;
+        }
+      }
+    }
+
+    const upcoming = getUpcomingStarts();
+    if (upcoming.length > 0) {
+      const nextStart = upcoming[0];
+      const sameTimeNames = getStartsAtSameTime(nextStart.start);
+      const diffSec = Math.ceil((nextStart.start.getTime() - now.getTime()) / 1000);
+
+      if (diffSec > 0 && diffSec <= 60) {
+        showOverlay("⏳ " + getCombinedStartLabel(sameTimeNames) + "\nstarts in " + diffSec + " sec");
+        return;
+      }
+    }
+
+    hideOverlay();
+  }
+
+  function showControlsTemporarily() {
+    const topbar = document.getElementById("topbar");
+    topbar.classList.remove("hidden");
+
+    if (controlsHideTimer) {
+      clearTimeout(controlsHideTimer);
+    }
+
+    controlsHideTimer = setTimeout(() => {
+      topbar.classList.add("hidden");
+    }, 10000);
+  }
+
+  document.addEventListener("mousemove", showControlsTemporarily);
+  document.addEventListener("keydown", showControlsTemporarily);
+
+  showControlsTemporarily();
+  updateClock();
+  updateStatusBar();
+  checkAlerts();
+
+  setInterval(updateClock, 1000);
+  setInterval(updateStatusBar, 1000);
+  setInterval(checkAlerts, 1000);
+</script>
+
+</body>
+</html>
